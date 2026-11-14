@@ -3,8 +3,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from django.db import transaction
-from .serializers import (RevisionSessionSerializer,QuestionSerializer,AnswerAttemptSerializer)
-from .models import RevisionSession, Question, AnswerAttempt
+from .serializers import (QuestionBankSerializer, RevisionSessionSerializer,QuestionSerializer,AnswerAttemptSerializer,RevisionTopicSerializer)
+from .models import RevisionSession, Question, AnswerAttempt, RevisionTopic, QuestionBank
 from django.utils import timezone
 from django.db.models import Count, Avg, Q
 
@@ -45,6 +45,33 @@ def save_questions(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    bank_id = request.data.get('bank_id')
+
+    if not bank_id:
+        return Response(
+            {"error": "Question Bank ID is required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    bank = QuestionBank.objects.filter(
+        bank_id=bank_id
+    ).first()
+
+    if not bank:
+        return Response(
+            {"error": "Question Bank not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    for question in questions_data:
+        question['bank'] = bank.bank_id
+
+        if int(question.get('topic_id', 0)) != bank.topic_id:
+            return Response(
+                {"error": "Question topic does not match bank topic"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
     serializer = QuestionSerializer(
         data=questions_data,
         many=True
@@ -71,6 +98,7 @@ def save_questions(request):
         serializer.errors,
         status=status.HTTP_400_BAD_REQUEST
     )
+
 
 import re
 
@@ -300,3 +328,210 @@ def topic_performance(request):
         "accuracy": accuracy,
         "average_time": round(performance['average_time'] or 0, 2)
     }, status=status.HTTP_200_OK)
+
+
+# Add Subject and Topic
+@api_view(['POST'])
+def add_revision_topic(request):
+
+    serializer = RevisionTopicSerializer(data=request.data)
+
+    if serializer.is_valid():
+        topic = serializer.save()
+
+        return Response({
+            "message": "Topic added successfully",
+            "topic": RevisionTopicSerializer(topic).data
+        }, status=status.HTTP_201_CREATED)
+
+    return Response(
+        serializer.errors,
+        status=status.HTTP_400_BAD_REQUEST
+    )
+
+
+# Get Subjects
+@api_view(['GET'])
+def get_revision_subjects(request):
+
+    user_id = request.query_params.get('user_id')
+
+    subjects = RevisionTopic.objects.filter(
+        user_id=user_id
+    ).values_list(
+        'subject_name', flat=True
+    ).distinct()
+
+    return Response({
+        "subjects": list(subjects)
+    })
+
+
+# Get Topics
+@api_view(['GET'])
+def get_revision_topics(request):
+
+    user_id = request.query_params.get('user_id')
+    subject_name = request.query_params.get('subject_name')
+
+    topics = RevisionTopic.objects.filter(
+        user_id=user_id,
+        subject_name=subject_name
+    )
+
+    serializer = RevisionTopicSerializer(topics, many=True)
+
+    return Response({
+        "topics": serializer.data
+    })
+
+
+# Delete Topic
+@api_view(['DELETE'])
+def delete_revision_topic(request, topic_id):
+
+    topic = RevisionTopic.objects.filter(
+        revision_topic_id=topic_id
+    ).first()
+
+    if not topic:
+        return Response(
+            {"error": "Topic not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    topic.delete()
+
+    return Response({
+        "message": "Topic deleted successfully"
+    })
+
+
+@api_view(['POST'])
+def create_question_bank(request):
+
+    topic_id = request.data.get('topic_id')
+    bank_name = request.data.get('bank_name')
+
+    if not topic_id or not bank_name:
+        return Response(
+            {"error": "Topic ID and bank name are required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    topic = RevisionTopic.objects.filter(
+        revision_topic_id=topic_id
+    ).first()
+
+    if not topic:
+        return Response(
+            {"error": "Topic not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    bank = QuestionBank.objects.create(
+        topic_id=topic_id,
+        bank_name=bank_name
+    )
+
+    return Response({
+        "message": "Question bank created successfully",
+        "bank": QuestionBankSerializer(bank).data
+    }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+def get_question_banks(request):
+
+    topic_id = request.query_params.get('topic_id')
+
+    if not topic_id:
+        return Response(
+            {"error": "Topic ID is required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    banks = QuestionBank.objects.filter(
+        topic_id=topic_id
+    ).order_by('-uploaded_at')
+
+    serializer = QuestionBankSerializer(
+        banks,
+        many=True
+    )
+
+    return Response({
+        "total_banks": banks.count(),
+        "banks": serializer.data
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+def get_bank_questions(request):
+
+    bank_id = request.query_params.get('bank_id')
+
+    if not bank_id:
+        return Response(
+            {"error": "Bank ID is required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    bank = QuestionBank.objects.filter(
+        bank_id=bank_id
+    ).first()
+
+    if not bank:
+        return Response(
+            {"error": "Question bank not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    questions = Question.objects.filter(
+        bank_id=bank_id,
+        is_active=True
+    ).order_by('question_id')
+
+    serializer = QuestionSerializer(
+        questions,
+        many=True
+    )
+
+    return Response({
+        "bank_name": bank.bank_name,
+        "total_questions": questions.count(),
+        "questions": serializer.data
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['PUT'])
+def update_question(request, question_id):
+
+    question = Question.objects.filter(
+        question_id=question_id
+    ).first()
+
+    if not question:
+        return Response(
+            {"error": "Question not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    serializer = QuestionSerializer(
+        question,
+        data=request.data,
+        partial=True
+    )
+
+    if serializer.is_valid():
+        serializer.save()
+
+        return Response({
+            "message": "Question updated successfully",
+            "question": serializer.data
+        })
+
+    return Response(
+        serializer.errors,
+        status=status.HTTP_400_BAD_REQUEST
+    )

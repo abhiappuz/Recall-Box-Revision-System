@@ -1,8 +1,10 @@
 import customtkinter as ctk
 from tkinter import messagebox, filedialog
 import os
+
+from django.contrib.admin import options
 from pdf_question_extractor import extract_pdf_text, parse_questions
-from api_client import save_questions
+from api_client import (get_bank_questions, save_questions,get_revision_subjects,get_revision_topics,add_revision_topic,create_question_bank,get_question_banks,update_question)
 
 
 # ---------------- CONFIGURATION ----------------
@@ -28,9 +30,52 @@ next_topic_id = 1
 
 def show_my_subjects(parent):
 
-    global main
+    global main, subjects
 
     main = parent
+
+    user_id = 1
+
+    subjects_result = get_revision_subjects(user_id)
+
+    if "error" in subjects_result:
+        messagebox.showerror(
+            "Loading Error",
+            str(subjects_result["error"])
+        )
+        return
+
+    subjects = []
+
+    for subject_name in subjects_result["subjects"]:
+
+        topics_result = get_revision_topics(
+            user_id,
+            subject_name
+        )
+
+        if "error" in topics_result:
+            messagebox.showerror(
+                "Loading Error",
+                str(topics_result["error"])
+            )
+            return
+
+        subject_topics = []
+
+        for topic in topics_result["topics"]:
+
+            subject_topics.append({
+                "id": topic["revision_topic_id"],
+                "name": topic["topic_name"],
+                "pdf": None,
+                "questions": []
+            })
+
+        subjects.append({
+            "name": subject_name,
+            "topics": subject_topics
+        })
 
     clear_main()
     show_subjects_page()
@@ -156,15 +201,20 @@ def add_subject():
                 parent=dialog
             )
             return
-        global next_subject_id
+
+        if any(s["name"].lower() == subject_name.lower()
+               for s in subjects):
+            messagebox.showwarning(
+                "Duplicate Subject",
+                "This subject already exists.",
+                parent=dialog
+            )
+            return
 
         subjects.append({
-            "id": next_subject_id,
             "name": subject_name,
             "topics": []
         })
-
-        next_subject_id += 1
 
         dialog.destroy()
         show_subjects_page()
@@ -263,8 +313,6 @@ def show_subject_details(subject):
 
 def add_topic(subject):
 
-    global next_topic_id
-
     dialog = ctk.CTkToplevel(main)
     dialog.title("Add Topic")
     dialog.geometry("400x230")
@@ -287,7 +335,6 @@ def add_topic(subject):
     topic_entry.pack(pady=10)
 
     def save_topic():
-        global next_topic_id
 
         topic_name = topic_entry.get().strip()
 
@@ -299,18 +346,30 @@ def add_topic(subject):
             )
             return
 
+        result = add_revision_topic(
+            user_id=1,
+            subject_name=subject["name"],
+            topic_name=topic_name
+        )
+
+        if "error" in result:
+            messagebox.showerror(
+                "Save Failed",
+                str(result["error"]),
+                parent=dialog
+            )
+            return
+
+        saved_topic = result["topic"]
+
         subject["topics"].append({
-            "id": next_topic_id,
-            "name": topic_name,
+            "id": saved_topic["revision_topic_id"],
+            "name": saved_topic["topic_name"],
             "pdf": None,
             "questions": []
         })
 
-        next_topic_id += 1
-
         dialog.destroy()
-
-        check_topic_ids()
 
         show_subject_details(subject)
 
@@ -322,7 +381,6 @@ def add_topic(subject):
         hover_color="#5544B8",
         command=save_topic
     ).pack(pady=15)
-    check_topic_ids()
 
 # ---------------- TOPIC DETAILS ----------------
 
@@ -352,48 +410,188 @@ def show_topic_details(topic, subject):
 
     ctk.CTkLabel(
         main,
-        text="Manage your question bank for this topic.",
+        text="Manage question banks for this topic.",
         font=("Arial", 14),
         text_color=MUTED
-    ).pack(anchor="w", pady=(0, 25))
+    ).pack(anchor="w", pady=(0, 20))
 
-    # Upload Question Bank
+    # Upload new question bank
     ctk.CTkButton(
         main,
-        text="📄 Upload Question Bank PDF",
-        width=230,
+        text="📄 Upload New Question Bank",
+        width=250,
         height=45,
         fg_color=PURPLE,
         hover_color="#5544B8",
         command=lambda: upload_question_bank(topic, subject)
-    ).pack(anchor="w", pady=10)
+    ).pack(anchor="e", pady=10)
 
-    # Preview Questions Button
+    # Question Banks heading
+    ctk.CTkLabel(
+        main,
+        text="Previously Uploaded Question Banks",
+        font=("Arial", 20, "bold"),
+        text_color=TEXT
+    ).pack(anchor="w", pady=(20, 10))
+
+    # Retrieve banks from database
+    result = get_question_banks(topic["id"])
+
+    if "error" in result:
+
+        ctk.CTkLabel(
+            main,
+            text=f"Unable to load question banks: {result['error']}",
+            font=("Arial", 13),
+            text_color="red"
+        ).pack(pady=20)
+
+        return
+
+    banks = result.get("banks", [])
+
+    if not banks:
+
+        ctk.CTkLabel(
+            main,
+            text="No question banks uploaded yet.",
+            font=("Arial", 14),
+            text_color=MUTED
+        ).pack(pady=30)
+
+    else:
+
+        for bank in banks:
+
+            bank_card = ctk.CTkFrame(
+                main,
+                fg_color=WHITE,
+                corner_radius=12,
+                height=90
+            )
+
+            bank_card.pack(fill="x", pady=7)
+            bank_card.pack_propagate(False)
+
+            ctk.CTkLabel(
+                bank_card,
+                text=bank["bank_name"],
+                font=("Arial", 16, "bold"),
+                text_color=TEXT
+            ).pack(side="left", padx=20)
+
+            ctk.CTkButton(
+                bank_card,
+                text="View Questions →",
+                fg_color=LIGHT_PURPLE,
+                hover_color="#DCD4FF",
+                text_color=PURPLE,
+                command=lambda b=bank: view_question_bank(
+                    b, topic, subject
+                )
+            ).pack(side="right", padx=20)
+
+def view_question_bank(bank, topic, subject):
+
+    result = get_bank_questions(bank["bank_id"])
+
+    if "error" in result:
+        messagebox.showerror(
+            "Loading Error",
+            str(result["error"])
+        )
+        return
+
+    clear_main()
+
+    # Back button
     ctk.CTkButton(
         main,
-        text="Preview Questions",
+        text="← Back to Topic",
+        fg_color="transparent",
+        text_color=PURPLE,
+        hover_color=LIGHT_PURPLE,
+        command=lambda: show_topic_details(topic, subject)
+    ).pack(anchor="w", pady=10)
+
+    # Bank title
+    ctk.CTkLabel(
+        main,
+        text=result["bank_name"],
+        font=("Arial", 26, "bold"),
+        text_color=TEXT
+    ).pack(anchor="w", pady=10)
+
+    questions = result.get("questions", [])
+
+    ctk.CTkLabel(
+        main,
+        text=f"Total Questions: {len(questions)}",
+        font=("Arial", 15, "bold"),
+        text_color=PURPLE
+    ).pack(anchor="w", pady=10)
+
+    # Scrollable area
+    question_frame = ctk.CTkScrollableFrame(
+        main,
+        fg_color=BG
+    )
+
+    question_frame.pack(fill="both", expand=True, pady=10)
+
+    for index, question in enumerate(questions, start=1):
+
+        card = ctk.CTkFrame(
+            question_frame,
+            fg_color=WHITE,
+            corner_radius=12
+        )
+
+        card.pack(fill="x", padx=10, pady=8)
+        ctk.CTkButton(
+        card,
+        text="Edit Question",
+        width=120,
+        height=30,
         fg_color=PURPLE,
         hover_color="#5745C5",
-        text_color=WHITE,
-        command=lambda: preview_questions(topic, subject)
-    ).pack(pady=10)
-
-    # Display uploaded PDF
-    if topic["pdf"]:
+        command=lambda q=question: edit_question(
+            q, topic, subject, saved=True, bank=bank)).pack(anchor="e", padx=15, pady=5)
 
         ctk.CTkLabel(
-            main,
-            text=f"Uploaded File: {os.path.basename(topic['pdf'])}",
-            font=("Arial", 14),
-            text_color=TEXT
-        ).pack(anchor="w", pady=10)
+            card,
+            text=f"Question {index}: {question['question_text']}",
+            font=("Arial", 15, "bold"),
+            text_color=TEXT,
+            wraplength=800,
+            justify="left"
+        ).pack(anchor="w", padx=15, pady=10)
+
+        options = question.get("options_json") or {}
+
+        for option, value in options.items():
+
+            ctk.CTkLabel(
+                card,
+                text=f"{option}. {value}",
+                font=("Arial", 13),
+                text_color=MUTED
+            ).pack(anchor="w", padx=30, pady=3)
 
         ctk.CTkLabel(
-            main,
-            text=f"Questions Extracted: {len(topic['questions'])}",
-            font=("Arial", 14, "bold"),
+            card,
+            text=f"Answer: {question['correct_answer']}",
+            font=("Arial", 13, "bold"),
             text_color=PURPLE
-        ).pack(anchor="w", pady=10)
+        ).pack(anchor="w", padx=15, pady=5)
+
+        ctk.CTkLabel(
+            card,
+            text=f"Explanation: {question.get('explanation') or 'Not available'}",
+            font=("Arial", 12),
+            text_color=MUTED,
+            wraplength=800
+        ).pack(anchor="w", padx=15, pady=(0, 12))
 
 #preview questions
 def preview_questions(topic, subject):
@@ -521,6 +719,13 @@ def preview_questions(topic, subject):
 
 def confirm_and_save_questions(topic):
 
+    if not topic.get("id"):
+        messagebox.showerror(
+            "Error",
+            "Invalid topic ID."
+        )
+        return
+
     questions = topic.get("questions", [])
 
     if not questions:
@@ -530,13 +735,28 @@ def confirm_and_save_questions(topic):
         )
         return
 
+    # Ask for Question Bank name
+    dialog = ctk.CTkInputDialog(
+        text="Enter Question Bank name:",
+        title="Create Question Bank"
+    )
+
+    bank_name = dialog.get_input()
+
+    if not bank_name or not bank_name.strip():
+        messagebox.showwarning(
+            "Warning",
+            "Question Bank name is required."
+        )
+        return
+
+    bank_name = bank_name.strip()
+
     formatted_questions = []
 
     for question in questions:
 
         answer = question["correct_answer"].strip().upper()
-
-        # Convert answers like B. def into B
         answer = answer[0] if answer else ""
 
         if answer not in question["options"]:
@@ -555,7 +775,7 @@ def confirm_and_save_questions(topic):
             return
 
         formatted_questions.append({
-            "topic_id": topic.get("id", 1),
+            "topic_id": topic["id"],
             "question_text": question["question_text"],
             "question_type": "MCQ",
             "options_json": question["options"],
@@ -565,37 +785,52 @@ def confirm_and_save_questions(topic):
             "is_active": True
         })
 
-    # Confirm before saving
     confirm = messagebox.askyesno(
         "Confirm & Save",
-        f"Are you sure you want to save "
+        f"Create bank '{bank_name}' and save "
         f"{len(formatted_questions)} questions?"
     )
 
     if not confirm:
         return
 
-    result = save_questions(formatted_questions)
+    # Create Question Bank
+    bank_result = create_question_bank(
+        topic["id"],
+        bank_name
+    )
+
+    if "error" in bank_result:
+        messagebox.showerror(
+            "Bank Creation Failed",
+            str(bank_result["error"])
+        )
+        return
+
+    bank_id = bank_result["bank"]["bank_id"]
+
+    # Save questions under the new bank
+    result = save_questions(
+        formatted_questions,
+        bank_id
+    )
 
     if "error" in result:
-
         messagebox.showerror(
             "Save Failed",
             str(result["error"])
         )
+        return
 
-    else:
-
-        messagebox.showinfo(
-            "Success",
-            f"{result['total_questions']} questions "
-            "saved successfully to the database!"
-        )
-
+    messagebox.showinfo(
+        "Success",
+        f"Question Bank: {bank_name}\n"
+        f"Questions Saved: {result['total_questions']}"
+    )
 
 #edit question
 
-def edit_question(question, topic, subject):
+def edit_question(question, topic, subject, saved=False, bank=None):
 
     clear_main()
 
@@ -606,8 +841,8 @@ def edit_question(question, topic, subject):
         fg_color="transparent",
         text_color=PURPLE,
         hover_color=LIGHT_PURPLE,
-        command=lambda: preview_questions(topic, subject)
-    ).pack(anchor="w", pady=5)
+        command=lambda: (view_question_bank(bank, topic, subject)
+        if saved else preview_questions(topic, subject))).pack(anchor="w", pady=5)
 
     # Heading
     ctk.CTkLabel(
@@ -636,9 +871,13 @@ def edit_question(question, topic, subject):
     question_entry.insert("1.0", question["question_text"])
 
     # Options
+    if saved:
+        options = question.get("options_json") or {}
+    else:
+        options = question.get("options") or {}
     option_entries = {}
 
-    for option, value in question["options"].items():
+    for option, value in options.items():
 
         ctk.CTkLabel(
             form,
@@ -679,7 +918,6 @@ def edit_question(question, topic, subject):
 
         new_answer = answer_entry.get().strip().upper()
 
-# Accept formats such as B, B. DEF or B. DEF
         if new_answer:
             new_answer = new_answer[0]
 
@@ -699,37 +937,72 @@ def edit_question(question, topic, subject):
             )
             return
 
-        question["question_text"] = new_question
+        new_options = {
+            option: entry.get().strip()
+            for option, entry in option_entries.items()
+        }
 
-        for option, entry in option_entries.items():
-            question["options"][option] = entry.get().strip()
+        if any(not value for value in new_options.values()):
+            messagebox.showerror(
+                "Error",
+                "All options must be filled."
+            )
+            return
 
-        question["correct_answer"] = new_answer
+        new_explanation = explanation_entry.get("1.0", "end").strip()
 
-        question["explanation"] = explanation_entry.get(
-            "1.0", "end"
-        ).strip()
+        if saved:
 
-        messagebox.showinfo(
-            "Success",
-            "Question updated successfully!"
-        )
+            update_data = {
+                "question_text": new_question,
+                "options_json": new_options,
+                "correct_answer": new_answer,
+                "explanation": new_explanation
+            }
 
-        preview_questions(topic, subject)
+            result = update_question(
+                question["question_id"],
+                update_data
+            )
+
+            if "error" in result:
+                messagebox.showerror(
+                    "Update Failed",
+                    str(result["error"])
+                )
+                return
+
+            messagebox.showinfo(
+                "Success",
+                "Question updated in database!"
+            )
+
+            view_question_bank(bank, topic, subject)
+
+        else:
+
+            question["question_text"] = new_question
+            question["options"] = new_options
+            question["correct_answer"] = new_answer
+            question["explanation"] = new_explanation
+
+            messagebox.showinfo(
+                "Success",
+                "Question updated successfully!"
+            )
+
+            preview_questions(topic, subject)
 
     # Save Changes Button
     ctk.CTkButton(
         form,
         text="Save Changes",
-        height=45,
+        width=180,
+        height=40,
         fg_color=PURPLE,
         hover_color="#5745C5",
-        text_color=WHITE,
         command=save_changes
     ).pack(pady=20)
-
-
-
 # ---------------- PDF UPLOAD ----------------
 
 def upload_question_bank(topic, subject):
@@ -769,7 +1042,7 @@ def upload_question_bank(topic, subject):
         f"Questions extracted: {len(questions)}"
     )
 
-    show_topic_details(topic, subject)
+    preview_questions(topic, subject)
 
 
 def show_subjects_for_practice(parent, callback):
@@ -868,3 +1141,5 @@ def check_topic_ids():
                 "Topic:", topic["name"],
                 "| Topic ID:", topic["id"]
             )
+
+

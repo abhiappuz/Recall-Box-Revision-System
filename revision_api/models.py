@@ -1,6 +1,16 @@
 from django.db import models
 
 
+class RevisionTopic(models.Model):
+    revision_topic_id = models.AutoField(primary_key=True)
+    user_id = models.IntegerField()
+    subject_name = models.CharField(max_length=100)
+    topic_name = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.subject_name} - {self.topic_name}"
+
 
 class RevisionSession(models.Model):
 
@@ -42,6 +52,21 @@ class RevisionSession(models.Model):
 
 
 
+class QuestionBank(models.Model):
+
+    bank_id = models.AutoField(primary_key=True)
+
+    topic_id = models.IntegerField()
+
+    bank_name = models.CharField(max_length=200)
+
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.bank_name
+
+    
+
 class Question(models.Model):
 
     QUESTION_TYPES = [
@@ -59,6 +84,7 @@ class Question(models.Model):
     question_id = models.AutoField(primary_key=True)
 
     topic_id = models.IntegerField()
+    bank = models.ForeignKey(QuestionBank,on_delete=models.CASCADE,related_name='questions',null=True,blank=True)
 
     question_text = models.TextField()
 
