@@ -207,6 +207,7 @@ def save_answer_attempt(request):
 
 @api_view(['POST'])
 def complete_revision_session(request):
+
     session_id = request.data.get('session_id')
 
     if not session_id:
@@ -229,16 +230,24 @@ def complete_revision_session(request):
     session.ended_at = timezone.now()
     session.save()
 
+    # Calculate total session duration
+    duration = session.ended_at - session.started_at
+    total_seconds = int(duration.total_seconds())
+
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+
     return Response(
         {
             "message": "Revision session completed successfully",
             "session_id": session.session_id,
             "status": session.status,
-            "ended_at": session.ended_at
+            "ended_at": session.ended_at,
+            "total_seconds": total_seconds,
+            "duration": f"{minutes} min {seconds} sec"
         },
         status=status.HTTP_200_OK
     )
-
 
 @api_view(['GET'])
 def question_performance(request):
@@ -319,6 +328,22 @@ def topic_performance(request):
         accuracy = round(
             (performance['correct_attempts'] / total) * 100, 2
         )
+    # Weak Topic Detection
+    if total == 0:
+        performance_level = "NOT_ATTEMPTED"
+        priority = "NOT_AVAILABLE"
+
+    elif accuracy < 50:
+        performance_level = "WEAK"
+        priority = "HIGH"
+
+    elif accuracy < 75:
+        performance_level = "AVERAGE"
+        priority = "MEDIUM"
+
+    else:
+        performance_level = "STRONG"
+        priority = "LOW"
 
     return Response({
         "topic_id": topic_id,
@@ -326,6 +351,8 @@ def topic_performance(request):
         "correct_attempts": performance['correct_attempts'],
         "incorrect_attempts": performance['incorrect_attempts'],
         "accuracy": accuracy,
+        "performance_level": performance_level,
+        "revision_priority": priority,
         "average_time": round(performance['average_time'] or 0, 2)
     }, status=status.HTTP_200_OK)
 
@@ -535,3 +562,124 @@ def update_question(request, question_id):
         serializer.errors,
         status=status.HTTP_400_BAD_REQUEST
     )
+
+
+# ---------------- REVISION HISTORY ----------------
+
+@api_view(['GET'])
+def revision_history(request):
+
+    user_id = request.query_params.get('user_id')
+
+    if not user_id:
+        return Response(
+            {"error": "User ID is required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    sessions = RevisionSession.objects.filter(
+        user_id=user_id
+    ).order_by('-started_at')
+
+    history = []
+
+    for session in sessions:
+
+        attempts = session.answer_attempts.all()
+
+        total_questions = attempts.count()
+
+        correct_answers = attempts.filter(
+            is_correct=True
+        ).count()
+
+        incorrect_answers = total_questions - correct_answers
+
+        accuracy = 0
+
+        if total_questions > 0:
+            accuracy = round(
+                (correct_answers / total_questions) * 100, 1
+            )
+
+        # Get topic name
+        topic = RevisionTopic.objects.filter(
+            revision_topic_id=session.topic_id
+        ).first()
+
+        topic_name = topic.topic_name if topic else "Unknown Topic"
+
+        # Calculate duration
+        total_seconds = 0
+
+        if session.ended_at:
+            duration = session.ended_at - session.started_at
+            total_seconds = int(duration.total_seconds())
+
+        history.append({
+            "session_id": session.session_id,
+            "date": session.started_at,
+            "revision_mode": session.session_mode,
+            "topic_name": topic_name,
+            "status": session.status,
+            "total_questions": total_questions,
+            "correct_answers": correct_answers,
+            "incorrect_answers": incorrect_answers,
+            "accuracy": accuracy,
+            "total_seconds": total_seconds
+        })
+
+    return Response({
+        "total_sessions": len(history),
+        "history": history
+    }, status=status.HTTP_200_OK)
+
+
+# ---------------- REVISION SESSION DETAILS ----------------
+
+@api_view(['GET'])
+def revision_session_details(request):
+
+    session_id = request.query_params.get('session_id')
+
+    if not session_id:
+        return Response(
+            {"error": "Session ID is required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    session = RevisionSession.objects.filter(
+        session_id=session_id
+    ).first()
+
+    if not session:
+        return Response(
+            {"error": "Session not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    attempts = session.answer_attempts.select_related(
+        'question'
+    ).all().order_by('attempted_at')
+
+    questions = []
+
+    for attempt in attempts:
+
+        question = attempt.question
+
+        questions.append({
+            "question_id": question.question_id,
+            "question_text": question.question_text,
+            "selected_answer": attempt.selected_answer,
+            "correct_answer": question.correct_answer,
+            "is_correct": attempt.is_correct,
+            "time_taken": attempt.time_taken,
+            "explanation": question.explanation
+        })
+
+    return Response({
+        "session_id": session.session_id,
+        "questions": questions,
+        "total_questions": len(questions)
+    }, status=status.HTTP_200_OK)

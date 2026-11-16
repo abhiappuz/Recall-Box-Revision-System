@@ -320,3 +320,102 @@ def update_question(question_id, data):
 
     except requests.RequestException as error:
         return {"error": str(error)}
+
+def get_topic_details(topic_id):
+
+    subjects_result = get_revision_subjects(1)
+
+    if isinstance(subjects_result, dict) and "error" in subjects_result:
+        return None
+
+    subjects = subjects_result.get("subjects", [])
+
+    for subject in subjects:
+
+        topics_result = get_revision_topics(1, subject)
+
+        if isinstance(topics_result, dict) and "error" in topics_result:
+            continue
+
+        topics = topics_result.get("topics", [])
+
+        for topic in topics:
+
+            if str(topic["revision_topic_id"]) == str(topic_id):
+                return topic
+
+    return None
+
+
+# ---------------- REVISION HISTORY API ----------------
+
+def get_revision_history(user_id):
+
+    url = BASE_URL + "revision-history/"
+
+    params = {
+        "user_id": user_id
+    }
+
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            return response.json()
+
+        try:
+            return {"error": response.json()}
+        except ValueError:
+            return {"error": response.text}
+
+    except requests.RequestException as error:
+        return {"error": str(error)}
+
+
+# Get details of a revision session
+def get_revision_session_details(session_id):
+    url = BASE_URL + "session-details/"
+    params = {"session_id": session_id}
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+
+        if response.status_code == 200:
+            return response.json()
+
+        try:
+            return {"error": response.json()}
+        except ValueError:
+            return {"error": response.text}
+
+    except requests.RequestException as error:
+        return {"error": str(error)}
+
+
+def get_topic_performance(user_id, topic_id):
+
+    url = BASE_URL + "topic-performance/"
+
+    params = {
+        "user_id": user_id,
+        "topic_id": topic_id
+    }
+
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            return response.json()
+
+        return {"error": response.json()}
+
+    except requests.RequestException as error:
+        return {"error": str(error)}

@@ -1,7 +1,9 @@
 
 import customtkinter as ctk
 from tkinter import messagebox
-from api_client import start_revision_session, get_questions, save_answer_attempt, complete_revision_session
+from api_client import (start_revision_session, get_questions, save_answer_attempt, 
+complete_revision_session,get_topic_details,get_revision_history, get_revision_session_details,get_revision_subjects,
+get_revision_topics,get_topic_performance)
 from my_subjects_ui import show_my_subjects
 import time
 
@@ -81,23 +83,184 @@ def show_revision_mode_popup():
 
 #select revision mode
 
+# Select Revision Mode
 def select_revision_mode(mode, popup):
 
     popup.destroy()
 
     if mode == "TOPIC_PRACTICE":
+
         from my_subjects_ui import show_subjects_for_practice
 
-        show_subjects_for_practice(main, start_topic_practice)
+        show_subjects_for_practice(
+            main,
+            start_topic_practice
+        )
+
+    elif mode == "SCHEDULED":
+
+        start_smart_revision()
+
+    elif mode == "MIXED":
+
+        from my_subjects_ui import show_subjects_for_practice
+
+        show_subjects_for_practice(
+            main,
+            lambda topic_id: start_selected_revision(
+                topic_id, mode
+            )
+        )
+
+# ---------------- SMART REVISION ----------------
+
+def start_smart_revision():
+
+    user_id = 1
+
+    # Step 1: Get all subjects
+    subject_result = get_revision_subjects(user_id)
+
+    if "error" in subject_result:
+        messagebox.showerror(
+            "Error",
+            str(subject_result["error"])
+        )
         return
 
-    # Select subject and topic for other modes
-    from my_subjects_ui import show_subjects_for_practice
+    subjects = subject_result.get("subjects", [])
 
-    show_subjects_for_practice(
-        main,
-        lambda topic_id: start_selected_revision(topic_id, mode)
+    if not subjects:
+        messagebox.showinfo(
+            "Smart Revision",
+            "No subjects available. Please add subjects first."
+        )
+        return
+
+    topic_list = []
+
+    # Step 2: Get topics under every subject
+    for subject in subjects:
+
+        topic_result = get_revision_topics(
+            user_id,
+            subject
+        )
+
+        if "error" in topic_result:
+            continue
+
+        topics = topic_result.get("topics", [])
+
+        for topic in topics:
+
+            topic_id = topic["revision_topic_id"]
+
+            # Step 3: Get topic performance
+            performance = get_topic_performance(
+                user_id,
+                topic_id
+            )
+
+            if "error" in performance:
+                continue
+
+            topic_list.append({
+                "topic_id": topic_id,
+                "topic_name": topic["topic_name"],
+                "subject_name": subject,
+                "accuracy": performance["accuracy"],
+                "priority": performance["revision_priority"]
+            })
+
+    if not topic_list:
+        messagebox.showinfo(
+            "Smart Revision",
+            "No topics available for revision."
+        )
+        return
+
+    # Step 4: Sort topics by revision priority
+    priority_order = {
+        "HIGH": 1,
+        "MEDIUM": 2,
+        "LOW": 3,
+        "NOT_AVAILABLE": 4
+    }
+
+    topic_list.sort(
+        key=lambda topic: (
+            priority_order.get(topic["priority"], 5),
+            topic["accuracy"]
+        )
     )
+
+    # Step 5: Find the highest-priority topic with questions
+    selected_topic = None
+    questions = []
+
+    for topic in topic_list:
+
+        question_result = get_questions(topic["topic_id"])
+
+        if "error" in question_result:
+            continue
+
+        available_questions = question_result.get(
+            "questions", []
+        )
+
+        if available_questions:
+            selected_topic = topic
+            questions = available_questions
+            break
+
+    if not selected_topic:
+        messagebox.showinfo(
+            "Smart Revision",
+            "No questions available in your topics."
+        )
+        return
+
+    # Step 6: Start revision session
+    result = start_revision_session(
+        user_id,
+        selected_topic["topic_id"],
+        "SCHEDULED"
+    )
+
+    if "error" in result:
+        messagebox.showerror(
+            "Error",
+            str(result["error"])
+        )
+        return
+
+    session_id = result["session"]["session_id"]
+
+    messagebox.showinfo(
+        "Smart Revision",
+        f"Selected Topic: {selected_topic['topic_name']}\n"
+        f"Subject: {selected_topic['subject_name']}\n"
+        f"Accuracy: {selected_topic['accuracy']}%\n"
+        f"Priority: {selected_topic['priority']}"
+    )
+
+    # Step 7: Open revision screen
+    show_question_screen(
+        questions,
+        session_id,
+        "SCHEDULED",
+        selected_topic["topic_id"]
+    )
+    print("\n--- SMART REVISION TOPIC ANALYSIS ---")
+
+    for topic in topic_list:
+        print(
+            f"Topic: {topic['topic_name']} | "
+            f"Accuracy: {topic['accuracy']}% | "
+            f"Priority: {topic['priority']}"
+        )
 
 # Start Smart Revision and Mixed Revision
 def start_selected_revision(topic_id, mode):
@@ -134,11 +297,7 @@ def start_selected_revision(topic_id, mode):
         return
 
     # Display questions
-    show_question_screen(
-        questions,
-        session_id,
-        mode
-    )
+    show_question_screen(questions, session_id, mode, topic_id)
 
     
 # Start Topic Practice
@@ -181,13 +340,14 @@ def start_topic_practice(topic_id):
 
     # Open question screen
     show_question_screen(
-        questions,
-        session_id,
-        mode
-    )
+    questions,
+    session_id,
+    "TOPIC_PRACTICE",
+    topic_id
+)
 
 # Fetch questions and show question screen
-def show_question_screen(questions, session_id, mode):
+def show_question_screen(questions, session_id, mode, topic_id):
 
     if not questions:
         messagebox.showinfo(
@@ -371,6 +531,16 @@ def show_question_screen(questions, session_id, mode):
     # FINAL RESULT
     def show_revision_result():
         completion_result = complete_revision_session(session_id)
+        total_duration = completion_result.get("duration","Not available")
+        total_seconds = completion_result.get("total_seconds", 0)
+
+        average_time = total_seconds / total_questions
+        topic_details = get_topic_details(topic_id)
+
+        topic_name = (
+            topic_details["topic_name"]
+            if topic_details else "Unknown Topic"
+        )
 
         if "error" in completion_result:
             messagebox.showerror(
@@ -395,6 +565,18 @@ def show_question_screen(questions, session_id, mode):
             text=f"Session ID: {session_id}",
             font=("Arial", 15),
             text_color=MUTED
+        ).pack(pady=10)
+        ctk.CTkLabel(
+        main,
+        text=f"Revision Mode: {mode.replace('_', ' ').title()}",
+        font=("Arial", 16),
+        text_color=TEXT
+        ).pack(pady=10)
+        ctk.CTkLabel(
+        main,
+        text=f"Topic: {topic_name}",
+        font=("Arial", 16),
+        text_color=TEXT
         ).pack(pady=10)
 
         ctk.CTkLabel(
@@ -424,6 +606,19 @@ def show_question_screen(questions, session_id, mode):
             font=("Arial", 22, "bold"),
             text_color=PURPLE
         ).pack(pady=20)
+        # Total Time Taken
+        ctk.CTkLabel(
+            main,
+            text=f"Total Time Taken: {total_duration}",
+            font=("Arial", 18, "bold"),
+            text_color=TEXT
+        ).pack(pady=10)
+        ctk.CTkLabel(
+        main,
+        text=f"Average Time per Question: {average_time:.1f} sec",
+        font=("Arial", 18),
+        text_color=TEXT
+        ).pack(pady=10)
 
         # Back to Home
         ctk.CTkButton(
@@ -565,7 +760,363 @@ def update_sidebar(selected_page):
                 font=("Arial", 14, "normal")
             )
 
+# ---------------- REVISION HISTORY ----------------
+# ---------------- REVISION SESSION DETAILS ----------------
 
+def show_session_details(session_id):
+
+    clear_main()
+
+    ctk.CTkLabel(
+        main,
+        text=f"Session #{session_id} Details",
+        font=("Arial", 30, "bold"),
+        text_color=TEXT
+    ).pack(anchor="w", pady=(15, 5))
+
+    ctk.CTkLabel(
+        main,
+        text="Review your answers and performance.",
+        font=("Arial", 14),
+        text_color=MUTED
+    ).pack(anchor="w", pady=(0, 20))
+
+    result = get_revision_session_details(session_id)
+
+    if "error" in result:
+        messagebox.showerror("Error", str(result["error"]))
+        return
+
+    questions = result.get("questions", [])
+    total_questions = len(questions)
+
+    correct_count = sum(
+        1 for q in questions if q["is_correct"]
+    )
+
+    incorrect_count = total_questions - correct_count
+
+    accuracy = (
+        (correct_count / total_questions) * 100
+        if total_questions > 0 else 0
+    )
+    total_time = sum(
+    float(q["time_taken"] or 0) for q in questions
+)
+
+    average_time = (
+        total_time / total_questions
+        if total_questions > 0 else 0
+    )
+
+    if not questions:
+        ctk.CTkLabel(
+            main,
+            text="No question attempts found for this session.",
+            font=("Arial", 16),
+            text_color=MUTED
+        ).pack(pady=30)
+
+    else:
+
+    # Performance Summary
+        summary_frame = ctk.CTkFrame(
+            main,
+            fg_color="transparent"
+        )
+        summary_frame.pack(fill="x", pady=10)
+
+        stats = [
+    ("Total Questions", total_questions),
+    ("Correct Answers", correct_count),
+    ("Incorrect Answers", incorrect_count),
+    ("Accuracy", f"{accuracy:.1f}%"),
+    ("Total Time", f"{total_time:.1f} sec"),
+    ("Avg. Time / Question", f"{average_time:.1f} sec")
+]
+
+        for title, value in stats:
+
+            card = ctk.CTkFrame(
+                summary_frame,
+                fg_color=WHITE,
+                corner_radius=12
+            )
+            card.pack(
+                side="left",
+                expand=True,
+                fill="both",
+                padx=6,
+                pady=5
+            )
+
+            ctk.CTkLabel(
+                card,
+                text=title,
+                font=("Arial", 13),
+                text_color=MUTED
+            ).pack(pady=(15, 5))
+
+            ctk.CTkLabel(
+                card,
+                text=str(value),
+                font=("Arial", 24, "bold"),
+                text_color=PURPLE
+            ).pack(pady=(0, 15))
+
+        # Question Details
+        question_frame = ctk.CTkScrollableFrame(
+            main,
+            fg_color="transparent"
+        )
+        question_frame.pack(fill="both", expand=True, pady=10)
+        question_frame.pack(fill="both", expand=True, pady=10)
+
+        for index, question in enumerate(questions, start=1):
+
+            card = ctk.CTkFrame(
+                question_frame,
+                fg_color=WHITE,
+                corner_radius=15
+            )
+            card.pack(fill="x", pady=8, padx=5)
+
+            status_text = (
+                "Correct Answer"
+                if question["is_correct"]
+                else "Incorrect Answer"
+            )
+
+            status_color = (
+                "#2E9D50"
+                if question["is_correct"]
+                else "#E04444"
+            )
+
+            ctk.CTkLabel(
+                card,
+                text=f"Question {index}",
+                font=("Arial", 19, "bold"),
+                text_color=PURPLE
+            ).pack(anchor="w", padx=20, pady=(15, 5))
+
+            ctk.CTkLabel(
+                card,
+                text=question["question_text"],
+                font=("Arial", 15),
+                text_color=TEXT,
+                wraplength=900,
+                justify="left"
+            ).pack(anchor="w", padx=20, pady=8)
+
+            answer_details = (
+                f"Your Answer: {question['selected_answer']}\n"
+                f"Correct Answer: {question['correct_answer']}\n"
+                f"Time Taken: {question['time_taken']} seconds"
+            )
+
+            ctk.CTkLabel(
+                card,
+                text=answer_details,
+                font=("Arial", 14),
+                text_color=TEXT,
+                justify="left"
+            ).pack(anchor="w", padx=20, pady=5)
+
+            ctk.CTkLabel(
+                card,
+                text=status_text,
+                font=("Arial", 15, "bold"),
+                text_color=status_color
+            ).pack(anchor="w", padx=20, pady=5)
+
+            ctk.CTkLabel(
+                card,
+                text=f"Explanation: {question['explanation'] or 'No explanation available.'}",
+                font=("Arial", 14),
+                text_color=MUTED,
+                wraplength=900,
+                justify="left"
+            ).pack(anchor="w", padx=20, pady=(5, 15))
+
+    ctk.CTkButton(
+        main,
+        text="Back to Revision History",
+        fg_color=PURPLE,
+        hover_color="#5544C7",
+        command=show_revision_history
+    ).pack(anchor="w", pady=15)
+# ---------------- REVISION HISTORY ----------------
+
+# ---------------- REVISION HISTORY ----------------
+
+def show_revision_history():
+
+    clear_main()
+
+    ctk.CTkLabel(
+        main,
+        text="Revision History",
+        font=("Arial", 30, "bold"),
+        text_color=TEXT
+    ).pack(anchor="w", pady=(15, 5))
+
+    ctk.CTkLabel(
+        main,
+        text="Track your previous revision sessions.",
+        font=("Arial", 14),
+        text_color=MUTED
+    ).pack(anchor="w", pady=(0, 20))
+
+    result = get_revision_history(1)
+
+    if "error" in result:
+        messagebox.showerror("Error", str(result["error"]))
+        return
+
+    history = result.get("history", [])
+
+    # Search and filter section
+    filter_frame = ctk.CTkFrame(
+        main,
+        fg_color="transparent"
+    )
+    filter_frame.pack(fill="x", pady=10)
+
+    search_entry = ctk.CTkEntry(
+        filter_frame,
+        placeholder_text="Search by topic name...",
+        width=300,
+        height=40
+    )
+    search_entry.pack(side="left", padx=(0, 15))
+
+    mode_filter = ctk.CTkOptionMenu(
+        filter_frame,
+        values=[
+            "All Modes",
+            "Topic Practice",
+            "Smart Revision",
+            "Mixed Revision"
+        ],
+        width=180,
+        height=40
+    )
+    mode_filter.pack(side="left")
+
+    history_frame = ctk.CTkScrollableFrame(
+        main,
+        fg_color="transparent"
+    )
+    history_frame.pack(fill="both", expand=True)
+
+    def display_history():
+
+        # Clear previous cards
+        for widget in history_frame.winfo_children():
+            widget.destroy()
+
+        search_text = search_entry.get().lower().strip()
+        selected_mode = mode_filter.get()
+
+        filtered_history = []
+
+        for session in history:
+
+            topic = session["topic_name"].lower()
+
+            mode = session["revision_mode"]
+
+            display_mode = mode.replace(
+                "_", " "
+            ).title()
+
+            # Search by topic
+            if search_text and search_text not in topic:
+                continue
+
+            # Filter by mode
+            if selected_mode != "All Modes":
+
+                if display_mode != selected_mode:
+                    continue
+
+            filtered_history.append(session)
+
+        if not filtered_history:
+
+            ctk.CTkLabel(
+                history_frame,
+                text="No matching revision sessions found.",
+                font=("Arial", 17),
+                text_color=MUTED
+            ).pack(pady=40)
+
+            return
+
+        for session in filtered_history:
+
+            card = ctk.CTkFrame(
+                history_frame,
+                fg_color=WHITE,
+                corner_radius=15
+            )
+            card.pack(fill="x", pady=8, padx=5)
+
+            date = str(session["date"]).replace(
+                "T", " "
+            )[:19]
+
+            total_seconds = session["total_seconds"]
+
+            minutes = total_seconds // 60
+            seconds = total_seconds % 60
+
+            details = (
+                f"Date: {date}\n"
+                f"Mode: {session['revision_mode'].replace('_', ' ').title()}\n"
+                f"Topic: {session['topic_name']}\n"
+                f"Status: {session['status']}\n"
+                f"Total Questions: {session['total_questions']}\n"
+                f"Correct: {session['correct_answers']}   "
+                f"Incorrect: {session['incorrect_answers']}\n"
+                f"Accuracy: {session['accuracy']}%\n"
+                f"Time Taken: {minutes} min {seconds} sec"
+            )
+
+            ctk.CTkLabel(
+                card,
+                text=f"Session #{session['session_id']}",
+                font=("Arial", 19, "bold"),
+                text_color=PURPLE
+            ).pack(anchor="w", padx=20, pady=(15, 5))
+
+            ctk.CTkLabel(
+                card,
+                text=details,
+                font=("Arial", 14),
+                text_color=TEXT,
+                justify="left"
+            ).pack(anchor="w", padx=20, pady=(5, 15))
+            ctk.CTkButton(
+            card,
+            text="View Details",
+            fg_color=PURPLE,
+            hover_color="#5544C7",
+            command=lambda sid=session["session_id"]: show_session_details(sid)
+            ).pack(anchor="e", padx=20, pady=(0, 15))
+
+    # Update results automatically
+    search_entry.bind(
+        "<KeyRelease>",
+        lambda event: display_history()
+    )
+
+    mode_filter.configure(
+        command=lambda choice: display_history()
+    )
+
+    display_history()
 # ---------------- PAGE NAVIGATION ----------------
 
 def show_page(page_name):
@@ -578,6 +1129,9 @@ def show_page(page_name):
     if page_name == "My Subjects":
 
         show_my_subjects(main)
+    elif page_name == "Revision History":
+
+        show_revision_history()
 
     elif page_name == "Start Revision":
 

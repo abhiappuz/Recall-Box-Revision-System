@@ -5,6 +5,9 @@ urlpatterns = [
     # Revision Session
     path('start-session/', views.start_revision_session, name='start_revision_session'),
     path('complete-session/', views.complete_revision_session, name='complete_revision_session'),
+    path('revision-history/', views.revision_history, name='revision_history'),
+    path('session-details/',views.revision_session_details,name='revision_session_details'),
+    
 
     # Question Management
     path('save-questions/', views.save_questions, name='save_questions'),

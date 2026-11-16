@@ -1047,8 +1047,52 @@ def upload_question_bank(topic, subject):
 
 def show_subjects_for_practice(parent, callback):
 
-    global main
+    global main, subjects
     main = parent
+
+    # Load subjects from database
+    user_id = 1
+
+    subjects_result = get_revision_subjects(user_id)
+
+    if "error" in subjects_result:
+        messagebox.showerror(
+            "Loading Error",
+            str(subjects_result["error"])
+        )
+        return
+
+    subjects = []
+
+    for subject_name in subjects_result["subjects"]:
+
+        topics_result = get_revision_topics(
+            user_id,
+            subject_name
+        )
+
+        if "error" in topics_result:
+            messagebox.showerror(
+                "Loading Error",
+                str(topics_result["error"])
+            )
+            return
+
+        subject_topics = []
+
+        for topic in topics_result["topics"]:
+
+            subject_topics.append({
+                "id": topic["revision_topic_id"],
+                "name": topic["topic_name"],
+                "pdf": None,
+                "questions": []
+            })
+
+        subjects.append({
+            "name": subject_name,
+            "topics": subject_topics
+        })
 
     clear_main()
 
