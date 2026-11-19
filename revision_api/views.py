@@ -9,6 +9,329 @@ from django.utils import timezone
 from django.db.models import Count, Avg, Q
 
 
+# ---------------- SMART REVISION ALGORITHM ----------------
+
+def calculate_accuracy_score(accuracy):
+    """Calculate score based on overall accuracy (30 points)."""
+
+    if accuracy <= 30:
+        return 30
+    elif accuracy <= 50:
+        return 25
+    elif accuracy <= 65:
+        return 20
+    elif accuracy <= 75:
+        return 12
+    elif accuracy <= 90:
+        return 5
+    else:
+        return 0
+
+
+def calculate_recent_accuracy_score(accuracy):
+    """Calculate score based on recent accuracy (35 points)."""
+
+    if accuracy <= 30:
+        return 35
+    elif accuracy <= 50:
+        return 30
+    elif accuracy <= 65:
+        return 24
+    elif accuracy <= 75:
+        return 15
+    elif accuracy <= 90:
+        return 7
+    else:
+        return 0
+
+
+def calculate_recency_score(days_since_revision):
+    """Calculate score based on revision recency (20 points)."""
+
+    if days_since_revision is None:
+        return 20
+
+    if days_since_revision > 14:
+        return 20
+    elif days_since_revision >= 7:
+        return 15
+    elif days_since_revision >= 3:
+        return 10
+    elif days_since_revision >= 1:
+        return 5
+    else:
+        return 0
+
+
+def calculate_frequency_score(total_attempts):
+    """Calculate score based on practice frequency (10 points)."""
+
+    if total_attempts == 0:
+        return 10
+    elif total_attempts <= 3:
+        return 8
+    elif total_attempts <= 5:
+        return 5
+    elif total_attempts <= 10:
+        return 3
+    else:
+        return 0
+
+
+def calculate_topic_status_score(total_attempts, incorrect_attempts):
+    """Calculate score based on topic status (5 points)."""
+
+    if total_attempts == 0:
+        return 5
+    elif incorrect_attempts > 0:
+        return 3
+    else:
+        return 0
+
+
+
+def calculate_smart_revision_score(user_id, topic_id):
+    """
+    Calculate Smart Revision priority score for a topic.
+    Maximum score: 100
+    """
+
+    # Get all attempts for this topic
+    attempts = AnswerAttempt.objects.filter(
+        user_id=user_id,
+        question__topic_id=topic_id
+    ).order_by('-attempted_at')
+
+    total_attempts = attempts.count()
+
+    # ----------------------------------
+    # 1. OVERALL PERFORMANCE
+    # ----------------------------------
+
+    correct_attempts = attempts.filter(
+        is_correct=True
+    ).count()
+
+    incorrect_attempts = attempts.filter(
+        is_correct=False
+    ).count()
+
+    overall_accuracy = 0
+
+    if total_attempts > 0:
+        overall_accuracy = (
+            correct_attempts / total_attempts
+        ) * 100
+
+    overall_score = calculate_accuracy_score(
+        overall_accuracy
+    )
+
+    # ----------------------------------
+    # 2. RECENT PERFORMANCE
+    # ----------------------------------
+
+    recent_attempts = attempts[:10]
+
+    recent_total = len(recent_attempts)
+
+    recent_correct = sum(
+        1 for attempt in recent_attempts
+        if attempt.is_correct
+    )
+
+    recent_accuracy = 0
+
+    if recent_total > 0:
+        recent_accuracy = (
+            recent_correct / recent_total
+        ) * 100
+
+    recent_score = calculate_recent_accuracy_score(
+        recent_accuracy
+    )
+
+    # ----------------------------------
+    # 3. REVISION RECENCY
+    # ----------------------------------
+
+    last_revision = RevisionSession.objects.filter(
+        user_id=user_id,
+        topic_id=topic_id,
+        status='COMPLETED'
+    ).order_by('-ended_at').first()
+
+    days_since_revision = None
+
+    if last_revision and last_revision.ended_at:
+
+        days_since_revision = (
+            timezone.now() - last_revision.ended_at
+        ).days
+
+    recency_score = calculate_recency_score(
+        days_since_revision
+    )
+
+    # ----------------------------------
+    # 4. PRACTICE FREQUENCY
+    # ----------------------------------
+
+    frequency_score = calculate_frequency_score(
+        total_attempts
+    )
+
+    # ----------------------------------
+    # 5. TOPIC STATUS
+    # ----------------------------------
+
+    topic_status_score = calculate_topic_status_score(
+        total_attempts,
+        incorrect_attempts
+    )
+
+    # ----------------------------------
+    # FINAL PRIORITY SCORE
+    # ----------------------------------
+
+    priority_score = (
+        overall_score
+        + recent_score
+        + recency_score
+        + frequency_score
+        + topic_status_score
+    )
+
+    # ----------------------------------
+    # PRIORITY CLASSIFICATION
+    # ----------------------------------
+# Determine revision priority
+    if recent_accuracy < 40 and total_attempts > 0:
+        revision_priority = "HIGH"
+
+    elif priority_score >= 70:
+        revision_priority = "HIGH"
+
+    elif priority_score >= 40:
+        revision_priority = "MEDIUM"
+
+    else:
+        revision_priority = "LOW"
+
+    # ----------------------------------
+    # PERFORMANCE LEVEL
+    # ----------------------------------
+
+    if total_attempts == 0:
+        performance_level = "NOT_ATTEMPTED"
+
+    elif overall_accuracy < 50:
+        performance_level = "WEAK"
+
+    elif overall_accuracy < 75:
+        performance_level = "AVERAGE"
+
+    else:
+        performance_level = "STRONG"
+
+    # ----------------------------------
+    # RETURN RESULTS
+    # ----------------------------------
+
+    return {
+        "topic_id": topic_id,
+        "total_attempts": total_attempts,
+        "correct_attempts": correct_attempts,
+        "incorrect_attempts": incorrect_attempts,
+
+        "overall_accuracy": round(
+            overall_accuracy, 2
+        ),
+
+        "recent_accuracy": round(
+            recent_accuracy, 2
+        ),
+
+        "recent_attempts": recent_total,
+
+        "days_since_revision": days_since_revision,
+
+        "performance_level": performance_level,
+
+        "priority_score": priority_score,
+
+        "revision_priority": revision_priority,
+
+        "score_breakdown": {
+            "overall_accuracy": overall_score,
+            "recent_accuracy": recent_score,
+            "revision_recency": recency_score,
+            "practice_frequency": frequency_score,
+            "topic_status": topic_status_score
+        }
+    }
+
+
+# ---------------- SMART REVISION TOPIC RANKING ----------------
+
+@api_view(['GET'])
+def smart_revision_topics(request):
+
+    user_id = request.query_params.get('user_id')
+
+    if not user_id:
+        return Response(
+            {"error": "User ID is required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Get all topics belonging to the user
+    topics = RevisionTopic.objects.filter(
+        user_id=user_id
+    )
+
+    topic_results = []
+
+    for topic in topics:
+
+        # Calculate priority score for each topic
+        performance = calculate_smart_revision_score(
+            user_id,
+            topic.revision_topic_id
+        )
+
+        # Add topic information
+        performance["subject_name"] = topic.subject_name
+        performance["topic_name"] = topic.topic_name
+
+        # Check question availability
+        available_questions = Question.objects.filter(
+            topic_id=topic.revision_topic_id,
+            is_active=True
+        ).count()
+
+        performance["available_questions"] = available_questions
+
+        topic_results.append(performance)
+
+    # Sort by priority score (highest first)
+    topic_results.sort(
+        key=lambda topic: (
+            topic["priority_score"],
+            -topic["overall_accuracy"]
+        ),
+        reverse=True
+    )
+
+    return Response(
+        {
+            "total_topics": len(topic_results),
+            "topics": topic_results
+        },
+        status=status.HTTP_200_OK
+    )
+
+
 
 
 @api_view(['POST'])

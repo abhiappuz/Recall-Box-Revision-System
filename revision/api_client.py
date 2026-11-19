@@ -419,3 +419,33 @@ def get_topic_performance(user_id, topic_id):
 
     except requests.RequestException as error:
         return {"error": str(error)}
+
+
+# ---------------- SMART REVISION API ----------------
+
+def get_smart_revision_topics(user_id):
+
+    url = BASE_URL + "smart-revision-topics/"
+
+    params = {
+        "user_id": user_id
+    }
+
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            return response.json()
+
+        try:
+            return {"error": response.json()}
+
+        except ValueError:
+            return {"error": response.text}
+
+    except requests.RequestException as error:
+        return {"error": str(error)}

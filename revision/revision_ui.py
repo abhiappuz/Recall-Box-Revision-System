@@ -3,7 +3,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 from api_client import (start_revision_session, get_questions, save_answer_attempt, 
 complete_revision_session,get_topic_details,get_revision_history, get_revision_session_details,get_revision_subjects,
-get_revision_topics,get_topic_performance)
+get_revision_topics,get_topic_performance,get_smart_revision_topics)
 from my_subjects_ui import show_my_subjects
 import time
 
@@ -112,117 +112,502 @@ def select_revision_mode(mode, popup):
             )
         )
 
-# ---------------- SMART REVISION ----------------
+def show_smart_revision_preview(selected_topic, questions):
 
-def start_smart_revision():
+    # Clear main content area
+    for widget in main.winfo_children():
+        widget.destroy()
+
+    # ==============================
+    # PERFORMANCE CALCULATIONS
+    # ==============================
+
+    accuracy = float(selected_topic["accuracy"])
+    priority = selected_topic["priority"]
+    question_count = len(questions)
+    estimated_minutes = question_count
+
+    if accuracy < 50:
+        performance_level = "WEAK"
+        performance_color = "#E74C3C"
+        performance_message = "Needs Improvement"
+
+        selection_reason = (
+            f"Your accuracy is {accuracy:.2f}%, below 50%. "
+            "This topic was selected to strengthen your understanding."
+        )
+
+    elif accuracy < 75:
+        performance_level = "AVERAGE"
+        performance_color = "#F39C12"
+        performance_message = "Keep Practicing"
+
+        selection_reason = (
+            "Your understanding can be improved. "
+            "This topic was selected to strengthen your knowledge."
+        )
+
+    else:
+        performance_level = "STRONG"
+        performance_color = "#27AE60"
+        performance_message = "Good Performance"
+
+        selection_reason = (
+            "This topic was selected to reinforce and maintain "
+            "your existing knowledge."
+        )
+
+    if priority == "HIGH":
+        priority_color = "#E74C3C"
+    elif priority == "MEDIUM":
+        priority_color = "#F39C12"
+    else:
+        priority_color = "#27AE60"
+
+    # ==============================
+    # HEADER
+    # ==============================
+
+    header_frame = ctk.CTkFrame(
+        main,
+        fg_color="transparent"
+    )
+
+    header_frame.pack(
+        fill="x",
+        padx=25,
+        pady=(8, 3)
+    )
+
+    ctk.CTkLabel(
+        header_frame,
+        text="Smart Revision",
+        font=("Arial", 25, "bold"),
+        text_color=TEXT
+    ).pack(anchor="w")
+
+    ctk.CTkLabel(
+        header_frame,
+        text="Your personalized learning session is ready!",
+        font=("Arial", 13),
+        text_color=MUTED
+    ).pack(anchor="w", pady=(2, 0))
+
+    # ==============================
+    # SUBJECT AND TOPIC
+    # ==============================
+
+    topic_card = ctk.CTkFrame(
+        main,
+        fg_color=WHITE,
+        corner_radius=16
+    )
+
+    topic_card.pack(
+        fill="x",
+        padx=25,
+        pady=5
+    )
+
+    topic_content = ctk.CTkFrame(
+        topic_card,
+        fg_color="transparent"
+    )
+
+    topic_content.pack(
+        fill="x",
+        padx=20,
+        pady=8
+    )
+
+    ctk.CTkLabel(
+        topic_content,
+        text="📚 SUBJECT",
+        font=("Arial", 10, "bold"),
+        text_color=MUTED
+    ).pack(anchor="w")
+
+    ctk.CTkLabel(
+        topic_content,
+        text=selected_topic["subject_name"],
+        font=("Arial", 18, "bold"),
+        text_color=TEXT
+    ).pack(anchor="w", pady=(1, 5))
+
+    ctk.CTkLabel(
+        topic_content,
+        text="📖 TOPIC",
+        font=("Arial", 10, "bold"),
+        text_color=MUTED
+    ).pack(anchor="w")
+
+    ctk.CTkLabel(
+        topic_content,
+        text=selected_topic["topic_name"],
+        font=("Arial", 17, "bold"),
+        text_color=PURPLE
+    ).pack(anchor="w", pady=(1, 0))
+
+    # ==============================
+    # PERFORMANCE CARDS
+    # ==============================
+
+    stats_frame = ctk.CTkFrame(
+        main,
+        fg_color="transparent"
+    )
+
+    stats_frame.pack(
+        fill="x",
+        padx=25,
+        pady=5
+    )
+
+    stats_frame.grid_columnconfigure(
+        (0, 1, 2),
+        weight=1
+    )
+
+    # Accuracy
+    accuracy_card = ctk.CTkFrame(
+        stats_frame,
+        fg_color=WHITE,
+        corner_radius=14
+    )
+
+    accuracy_card.grid(
+        row=0,
+        column=0,
+        padx=4,
+        sticky="nsew"
+    )
+
+    ctk.CTkLabel(
+        accuracy_card,
+        text="📊 ACCURACY",
+        font=("Arial", 10, "bold"),
+        text_color=MUTED
+    ).pack(pady=(8, 2))
+
+    ctk.CTkLabel(
+        accuracy_card,
+        text=f"{accuracy:.2f}%",
+        font=("Arial", 21, "bold"),
+        text_color=performance_color
+    ).pack(pady=1)
+
+    ctk.CTkLabel(
+        accuracy_card,
+        text=performance_message,
+        font=("Arial", 10),
+        text_color=performance_color
+    ).pack(pady=(0, 8))
+
+    # Performance
+    performance_card = ctk.CTkFrame(
+        stats_frame,
+        fg_color=WHITE,
+        corner_radius=14
+    )
+
+    performance_card.grid(
+        row=0,
+        column=1,
+        padx=4,
+        sticky="nsew"
+    )
+
+    ctk.CTkLabel(
+        performance_card,
+        text="🎯 PERFORMANCE",
+        font=("Arial", 10, "bold"),
+        text_color=MUTED
+    ).pack(pady=(8, 2))
+
+    ctk.CTkLabel(
+        performance_card,
+        text=performance_level,
+        font=("Arial", 21, "bold"),
+        text_color=performance_color
+    ).pack(pady=1)
+
+    ctk.CTkLabel(
+        performance_card,
+        text="Learning Status",
+        font=("Arial", 10),
+        text_color=MUTED
+    ).pack(pady=(0, 8))
+
+    # Priority
+    priority_card = ctk.CTkFrame(
+        stats_frame,
+        fg_color=WHITE,
+        corner_radius=14
+    )
+
+    priority_card.grid(
+        row=0,
+        column=2,
+        padx=4,
+        sticky="nsew"
+    )
+
+    ctk.CTkLabel(
+        priority_card,
+        text="🔥 PRIORITY",
+        font=("Arial", 10, "bold"),
+        text_color=MUTED
+    ).pack(pady=(8, 2))
+
+    ctk.CTkLabel(
+        priority_card,
+        text=priority,
+        font=("Arial", 21, "bold"),
+        text_color=priority_color
+    ).pack(pady=1)
+
+    ctk.CTkLabel(
+        priority_card,
+        text="Revision Priority",
+        font=("Arial", 10),
+        text_color=MUTED
+    ).pack(pady=(0, 8))
+
+    # ==============================
+    # PERFORMANCE PROGRESS
+    # ==============================
+
+    progress_card = ctk.CTkFrame(
+        main,
+        fg_color=WHITE,
+        corner_radius=14
+    )
+
+    progress_card.pack(
+        fill="x",
+        padx=25,
+        pady=5
+    )
+
+    ctk.CTkLabel(
+        progress_card,
+        text="Your Performance",
+        font=("Arial", 15, "bold"),
+        text_color=TEXT
+    ).pack(
+        anchor="w",
+        padx=15,
+        pady=(8, 2)
+    )
+
+    ctk.CTkLabel(
+        progress_card,
+        text=f"Current Accuracy: {accuracy:.2f}%",
+        font=("Arial", 11),
+        text_color=MUTED
+    ).pack(
+        anchor="w",
+        padx=15,
+        pady=(0, 5)
+    )
+
+    progress_bar = ctk.CTkProgressBar(
+        progress_card,
+        height=12,
+        corner_radius=8,
+        progress_color=performance_color
+    )
+
+    progress_bar.pack(
+        fill="x",
+        padx=15,
+        pady=(0, 4)
+    )
+
+    progress_bar.set(
+        max(0, min(accuracy / 100, 1))
+    )
+
+    ctk.CTkLabel(
+        progress_card,
+        text="Target Accuracy: 75%",
+        font=("Arial", 10, "bold"),
+        text_color=PURPLE
+    ).pack(
+        anchor="e",
+        padx=15,
+        pady=(2, 8)
+    )
+
+    # ==============================
+    # WHY THIS TOPIC?
+    # ==============================
+
+    reason_card = ctk.CTkFrame(
+        main,
+        fg_color=LIGHT_PURPLE,
+        corner_radius=14
+    )
+
+    reason_card.pack(
+        fill="x",
+        padx=25,
+        pady=5
+    )
+
+    ctk.CTkLabel(
+        reason_card,
+        text="💡 Why this topic?",
+        font=("Arial", 14, "bold"),
+        text_color=TEXT
+    ).pack(
+        anchor="w",
+        padx=15,
+        pady=(8, 3)
+    )
+
+    ctk.CTkLabel(
+        reason_card,
+        text=selection_reason,
+        font=("Arial", 11),
+        text_color=TEXT,
+        wraplength=950,
+        justify="left"
+    ).pack(
+        anchor="w",
+        padx=15,
+        pady=(0, 8)
+    )
+
+    # ==============================
+    # SESSION INFORMATION
+    # ==============================
+
+    session_frame = ctk.CTkFrame(
+        main,
+        fg_color="transparent"
+    )
+
+    session_frame.pack(
+        fill="x",
+        padx=25,
+        pady=5
+    )
+
+    session_frame.grid_columnconfigure(
+        (0, 1),
+        weight=1
+    )
+
+    # Questions
+    questions_card = ctk.CTkFrame(
+        session_frame,
+        fg_color=WHITE,
+        corner_radius=14
+    )
+
+    questions_card.grid(
+        row=0,
+        column=0,
+        padx=4,
+        sticky="nsew"
+    )
+
+    ctk.CTkLabel(
+        questions_card,
+        text="📝 QUESTIONS",
+        font=("Arial", 10, "bold"),
+        text_color=MUTED
+    ).pack(pady=(8, 2))
+
+    ctk.CTkLabel(
+        questions_card,
+        text=str(question_count),
+        font=("Arial", 21, "bold"),
+        text_color=PURPLE
+    ).pack(pady=(0, 8))
+
+    # Estimated time
+    time_card = ctk.CTkFrame(
+        session_frame,
+        fg_color=WHITE,
+        corner_radius=14
+    )
+
+    time_card.grid(
+        row=0,
+        column=1,
+        padx=4,
+        sticky="nsew"
+    )
+
+    ctk.CTkLabel(
+        time_card,
+        text="⏱️ ESTIMATED TIME",
+        font=("Arial", 10, "bold"),
+        text_color=MUTED
+    ).pack(pady=(8, 2))
+
+    ctk.CTkLabel(
+        time_card,
+        text=f"~{estimated_minutes} minutes",
+        font=("Arial", 21, "bold"),
+        text_color=PURPLE
+    ).pack(pady=(0, 8))
+
+    # ==============================
+    # ACTION BUTTONS
+    # ==============================
+
+    button_frame = ctk.CTkFrame(
+        main,
+        fg_color="transparent"
+    )
+
+    button_frame.pack(
+        pady=(8, 10)
+    )
+
+    # Start Revision
+    ctk.CTkButton(
+        button_frame,
+        text="▶  Start Revision",
+        width=200,
+        height=42,
+        corner_radius=12,
+        font=("Arial", 14, "bold"),
+        fg_color=PURPLE,
+        hover_color="#5745C5",
+        command=lambda: start_smart_revision_session(
+            selected_topic,
+            questions
+        )
+    ).pack(
+        side="left",
+        padx=8
+    )
+
+    # Dashboard
+    ctk.CTkButton(
+        button_frame,
+        text="←  Back to Dashboard",
+        width=200,
+        height=42,
+        corner_radius=12,
+        font=("Arial", 13, "bold"),
+        fg_color="#E5E5E5",
+        text_color=TEXT,
+        hover_color="#D5D5D5",
+        command=lambda: show_page("Dashboard")
+    ).pack(
+        side="left",
+        padx=8
+    )
+def start_smart_revision_session(selected_topic, questions):
 
     user_id = 1
 
-    # Step 1: Get all subjects
-    subject_result = get_revision_subjects(user_id)
-
-    if "error" in subject_result:
-        messagebox.showerror(
-            "Error",
-            str(subject_result["error"])
-        )
-        return
-
-    subjects = subject_result.get("subjects", [])
-
-    if not subjects:
-        messagebox.showinfo(
-            "Smart Revision",
-            "No subjects available. Please add subjects first."
-        )
-        return
-
-    topic_list = []
-
-    # Step 2: Get topics under every subject
-    for subject in subjects:
-
-        topic_result = get_revision_topics(
-            user_id,
-            subject
-        )
-
-        if "error" in topic_result:
-            continue
-
-        topics = topic_result.get("topics", [])
-
-        for topic in topics:
-
-            topic_id = topic["revision_topic_id"]
-
-            # Step 3: Get topic performance
-            performance = get_topic_performance(
-                user_id,
-                topic_id
-            )
-
-            if "error" in performance:
-                continue
-
-            topic_list.append({
-                "topic_id": topic_id,
-                "topic_name": topic["topic_name"],
-                "subject_name": subject,
-                "accuracy": performance["accuracy"],
-                "priority": performance["revision_priority"]
-            })
-
-    if not topic_list:
-        messagebox.showinfo(
-            "Smart Revision",
-            "No topics available for revision."
-        )
-        return
-
-    # Step 4: Sort topics by revision priority
-    priority_order = {
-        "HIGH": 1,
-        "MEDIUM": 2,
-        "LOW": 3,
-        "NOT_AVAILABLE": 4
-    }
-
-    topic_list.sort(
-        key=lambda topic: (
-            priority_order.get(topic["priority"], 5),
-            topic["accuracy"]
-        )
-    )
-
-    # Step 5: Find the highest-priority topic with questions
-    selected_topic = None
-    questions = []
-
-    for topic in topic_list:
-
-        question_result = get_questions(topic["topic_id"])
-
-        if "error" in question_result:
-            continue
-
-        available_questions = question_result.get(
-            "questions", []
-        )
-
-        if available_questions:
-            selected_topic = topic
-            questions = available_questions
-            break
-
-    if not selected_topic:
-        messagebox.showinfo(
-            "Smart Revision",
-            "No questions available in your topics."
-        )
-        return
-
-    # Step 6: Start revision session
+    # Start revision session
     result = start_revision_session(
         user_id,
         selected_topic["topic_id"],
@@ -238,30 +623,82 @@ def start_smart_revision():
 
     session_id = result["session"]["session_id"]
 
-    messagebox.showinfo(
-        "Smart Revision",
-        f"Selected Topic: {selected_topic['topic_name']}\n"
-        f"Subject: {selected_topic['subject_name']}\n"
-        f"Accuracy: {selected_topic['accuracy']}%\n"
-        f"Priority: {selected_topic['priority']}"
-    )
-
-    # Step 7: Open revision screen
+    # Open revision questions
     show_question_screen(
         questions,
         session_id,
         "SCHEDULED",
         selected_topic["topic_id"]
     )
-    print("\n--- SMART REVISION TOPIC ANALYSIS ---")
 
-    for topic in topic_list:
-        print(
-            f"Topic: {topic['topic_name']} | "
-            f"Accuracy: {topic['accuracy']}% | "
-            f"Priority: {topic['priority']}"
+# ---------------- SMART REVISION ----------------
+
+def start_smart_revision():
+    user_id = 1
+
+    # Fetch topics ranked by the Smart Revision algorithm
+    result = get_smart_revision_topics(user_id)
+
+    if "error" in result:
+        messagebox.showerror(
+            "Error",
+            f"Failed to fetch Smart Revision topics:\n{result['error']}"
+        )
+        return
+
+    topics = result.get("topics", [])
+
+    if not topics:
+        messagebox.showinfo(
+            "Smart Revision",
+            "No topics available for revision."
+        )
+        return
+
+    # Find the highest-priority topic with available questions
+    for topic in topics:
+
+        if topic.get("available_questions", 0) <= 0:
+            continue
+
+        topic_id = topic.get("topic_id")
+
+        # Fetch questions for this topic
+        question_result = get_questions(topic_id)
+
+        if "error" in question_result:
+            continue
+
+        questions = question_result.get("questions", [])
+
+        if not questions:
+            continue
+
+        # Prepare topic information for the preview screen
+        selected_topic = {
+            "topic_id": topic["topic_id"],
+            "topic_name": topic["topic_name"],
+            "subject_name": topic["subject_name"],
+            "accuracy": topic["overall_accuracy"],
+            "priority": topic["revision_priority"]
+        }
+
+        # Display the Smart Revision preview
+        show_smart_revision_preview(
+            selected_topic,
+            questions
         )
 
+        return
+
+    # No questions available in any topic
+    messagebox.showinfo(
+        "Smart Revision",
+        "No questions are currently available for revision."
+    )
+
+
+    
 # Start Smart Revision and Mixed Revision
 def start_selected_revision(topic_id, mode):
 

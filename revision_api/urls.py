@@ -7,6 +7,7 @@ urlpatterns = [
     path('complete-session/', views.complete_revision_session, name='complete_revision_session'),
     path('revision-history/', views.revision_history, name='revision_history'),
     path('session-details/',views.revision_session_details,name='revision_session_details'),
+    path('smart-revision-topics/',views.smart_revision_topics,name='smart_revision_topics'),
     
 
     # Question Management
