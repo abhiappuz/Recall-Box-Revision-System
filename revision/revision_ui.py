@@ -664,7 +664,7 @@ def start_smart_revision():
         topic_id = topic.get("topic_id")
 
         # Fetch questions for this topic
-        question_result = get_questions(topic_id)
+        question_result = get_questions(topic_id, user_id)
 
         if "error" in question_result:
             continue
@@ -718,7 +718,7 @@ def start_selected_revision(topic_id, mode):
     session_id = result["session"]["session_id"]
 
     # Get questions for selected topic
-    question_result = get_questions(topic_id)
+    question_result = get_questions(topic_id, user_id)
 
     if "error" in question_result:
         messagebox.showerror("Error", str(question_result["error"]))
@@ -757,7 +757,7 @@ def start_topic_practice(topic_id):
     session_id = result["session"]["session_id"]
 
     # Retrieve questions for selected topic
-    question_result = get_questions(topic_id)
+    question_result = get_questions(topic_id, user_id)
 
     if "error" in question_result:
         messagebox.showerror(
@@ -816,6 +816,32 @@ def show_question_screen(questions, session_id, mode, topic_id):
 
         question = questions[current_index]
 
+        # ---------------- QUESTION PRIORITY ----------------
+
+        priority = question.get("priority", "NORMAL")
+        priority_score = question.get("priority_score", 0)
+        priority_reason = question.get("priority_reason", "")
+
+        if current_index == 0 and priority == "HIGH":
+            priority_label = "🔥 MOST NEEDS PRACTICE"
+            priority_color = "#E5484D"
+
+        elif priority == "HIGH":
+            priority_label = "🔴 HIGH PRIORITY"
+            priority_color = "#E5484D"
+
+        elif priority == "MEDIUM":
+            priority_label = "🟠 NEEDS PRACTICE"
+            priority_color = "#F39C12"
+
+        elif priority == "LOW":
+            priority_label = "🟢 MASTERED"
+            priority_color = "#2EAD63"
+
+        else:
+            priority_label = "⚪ NEW QUESTION"
+            priority_color = "#85849A"
+
         selected_answer.set("")
         question_start_time = time.time()
 
@@ -832,6 +858,30 @@ def show_question_screen(questions, session_id, mode, topic_id):
             font=("Arial", 20, "bold"),
             text_color=TEXT
         ).pack(pady=15)
+
+        # ---------------- PRIORITY BADGE ----------------
+
+        ctk.CTkLabel(
+            main,
+            text=priority_label,
+            text_color=priority_color,
+            font=("Arial", 14, "bold")
+        ).pack(pady=(10, 5))
+
+        ctk.CTkLabel(
+        main,
+        text=priority_reason,
+        text_color="#85849A",
+        font=("Arial", 12),
+        wraplength=700
+        ).pack(pady=(0, 15))
+
+        ctk.CTkLabel(
+        main,
+        text=f"Priority Score: {priority_score}/100",
+        text_color=priority_color,
+        font=("Arial", 11, "bold")
+        ).pack(pady=(0, 10))
 
         ctk.CTkLabel(
             main,
@@ -960,10 +1010,30 @@ def show_question_screen(questions, session_id, mode, topic_id):
         current_index += 1
 
         if current_index < total_questions:
+
+            # Refresh question priorities from Django
+            updated_data = get_questions(topic_id, user_id)
+
+            if "error" not in updated_data:
+
+                updated_questions = updated_data.get("questions", [])
+
+                # Update existing question data
+                for old_question in questions:
+
+                    for updated_question in updated_questions:
+
+                        if old_question["question_id"] == updated_question["question_id"]:
+
+                            old_question.update(updated_question)
+                            break
+
             display_question()
 
         else:
             show_revision_result()
+
+
 
     # FINAL RESULT
     def show_revision_result():

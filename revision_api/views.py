@@ -9,6 +9,125 @@ from django.utils import timezone
 from django.db.models import Count, Avg, Q
 
 
+# ---------------- QUESTION PRIORITY ALGORITHM ----------------
+
+def calculate_question_priority(user_id, question_id):
+
+    # Get all attempts for this question by the user
+    attempts = AnswerAttempt.objects.filter(
+        user_id=user_id,
+        question_id=question_id
+    ).order_by('-attempted_at')
+
+    total_attempts = attempts.count()
+
+    # ----------------------------------
+    # 1. NEVER ATTEMPTED
+    # ----------------------------------
+
+    if total_attempts == 0:
+        return {
+            "priority": "NORMAL",
+            "reason": "Not attempted yet",
+            "priority_score": 0,
+            "total_attempts": 0,
+            "correct_attempts": 0,
+            "incorrect_attempts": 0,
+            "accuracy": 0,
+            "average_time": 0
+        }
+
+    # ----------------------------------
+    # 2. PERFORMANCE CALCULATIONS
+    # ----------------------------------
+
+    correct_attempts = attempts.filter(
+        is_correct=True
+    ).count()
+
+    incorrect_attempts = attempts.filter(
+        is_correct=False
+    ).count()
+
+    accuracy = (
+        correct_attempts / total_attempts
+    ) * 100
+
+    average_time = attempts.aggregate(
+        Avg('time_taken')
+    )['time_taken__avg'] or 0
+
+    latest_attempt = attempts.first()
+
+    # ----------------------------------
+    # 3. PRIORITY SCORE CALCULATION
+    # ----------------------------------
+
+    priority_score = 0
+
+    # Incorrect attempts
+    priority_score += incorrect_attempts * 5
+
+    # Low accuracy
+    if accuracy < 30:
+        priority_score += 30
+
+    elif accuracy < 50:
+        priority_score += 20
+
+    elif accuracy < 70:
+        priority_score += 10
+
+    # Latest attempt incorrect
+    if not latest_attempt.is_correct:
+        priority_score += 25
+
+    # Latest attempt correct
+    else:
+        priority_score -= 10
+
+    # Multiple incorrect attempts
+    if incorrect_attempts >= 3:
+        priority_score += 15
+
+    # ----------------------------------
+    # 4. PRIORITY CLASSIFICATION
+    # ----------------------------------
+
+    if not latest_attempt.is_correct:
+        priority = "HIGH"
+        reason = "Latest attempt was incorrect"
+
+    elif accuracy < 50 and total_attempts >= 2:
+        priority = "HIGH"
+        reason = "Low overall accuracy"
+
+    elif incorrect_attempts > 0:
+        priority = "MEDIUM"
+        reason = "Inconsistent performance"
+
+    elif average_time > 30:
+        priority = "MEDIUM"
+        reason = "Correct answers but slow response"
+
+    else:
+        priority = "LOW"
+        reason = "Consistently answered correctly"
+
+    # ----------------------------------
+    # 5. RETURN RESULTS
+    # ----------------------------------
+
+    return {
+        "priority": priority,
+        "reason": reason,
+        "priority_score": max(priority_score, 0),
+        "total_attempts": total_attempts,
+        "correct_attempts": correct_attempts,
+        "incorrect_attempts": incorrect_attempts,
+        "accuracy": round(accuracy, 2),
+        "average_time": round(average_time, 2)
+    }
 # ---------------- SMART REVISION ALGORITHM ----------------
 
 def calculate_accuracy_score(accuracy):
@@ -436,11 +555,10 @@ def get_questions(request):
             {"error": "Topic ID is required"},
             status=status.HTTP_400_BAD_REQUEST
         )
-
     questions = Question.objects.filter(
         topic_id=topic_id,
         is_active=True
-    ).order_by('question_id')
+    )
 
     unique_questions = []
     seen_questions = set()
@@ -466,15 +584,81 @@ def get_questions(request):
             seen_questions.add(normalized_text)
             unique_questions.append(question)
 
-    serializer = QuestionSerializer(
-        unique_questions,
-        many=True
+    # ----------------------------------
+    # QUESTION PRIORITY CALCULATION
+    # ----------------------------------
+
+    priority_order = {
+        "HIGH": 1,
+        "MEDIUM": 2,
+        "NORMAL": 3,
+        "LOW": 4
+    }
+
+    prioritized_questions = []
+
+    user_id = request.query_params.get('user_id')
+
+    for question in unique_questions:
+
+        # Calculate question priority
+        performance = calculate_question_priority(
+            user_id,
+            question.question_id
+        )
+
+        # Store question and its priority information
+        prioritized_questions.append({
+            "question": question,
+            "priority": performance["priority"],
+            "priority_reason": performance["reason"],
+            "performance": performance
+        })
+
+
+# ----------------------------------
+# SORT QUESTIONS BY PRIORITY AND SCORE
+# ----------------------------------
+
+    prioritized_questions.sort(
+        key=lambda item: (
+            priority_order.get(item["priority"], 5),
+            -item["performance"]["priority_score"]
+        )
     )
 
+
+    # ----------------------------------
+    # SERIALIZE QUESTIONS
+    # ----------------------------------
+
+    questions_data = []
+
+    for item in prioritized_questions:
+
+        question_data = QuestionSerializer(
+            item["question"]
+        ).data
+
+       # Add priority information
+        question_data["priority"] = item["priority"]
+        question_data["priority_reason"] = item["priority_reason"]
+
+        # Add priority score
+        question_data["priority_score"] = item["performance"]["priority_score"]
+
+        # Add performance details
+        question_data["performance"] = item["performance"]
+
+        questions_data.append(question_data)
+
+
     return Response({
-        "total_questions": len(unique_questions),
-        "questions": serializer.data
+        "total_questions": len(questions_data),
+        "questions": questions_data
     }, status=status.HTTP_200_OK)
+
+
 
 @api_view(['POST'])
 def save_answer_attempt(request):

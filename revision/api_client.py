@@ -111,12 +111,13 @@ def get_question_banks(topic_id):
         return {"error": str(error)}
 
     
-def get_questions(topic_id):
+def get_questions(topic_id, user_id):
 
     url = BASE_URL + "get-questions/"
 
     params = {
-        "topic_id": topic_id
+        "topic_id": topic_id,
+        "user_id": user_id
     }
 
     try:
